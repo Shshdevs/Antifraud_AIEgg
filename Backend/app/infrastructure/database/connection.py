@@ -71,6 +71,88 @@ class Database:
             cursor.execute(query, params)
             return cursor.fetchall()
 
+    def select_recent_calls_with_latest_assessment(
+        self,
+        fields: Sequence[str],
+        *,
+        filters: Sequence[Filter | FilterGroup] = (),
+        order_by: Sequence[Sort] = (),
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[tuple[Any, ...]]:
+        assessment_fields = {
+            "c.risk_score": "a.risk_score",
+            "c.risk_level": "a.risk_level",
+            "c.is_fraud": "a.is_fraud",
+            "c.fraud_scenario": "a.fraud_scenario",
+            "c.reasons": "a.reasons",
+            "c.recommendation": "a.recommendation",
+            "c.auto_blocked": "a.auto_blocked",
+        }
+        query = SQL(
+            "WITH recent_calls AS ("
+            " SELECT id, call_type, imsi_a, msisdn_a, msisdn_b, call_time, "
+            " duration_seconds, msisdn_c FROM public.calls "
+            " ORDER BY call_time DESC LIMIT 100"
+            ") SELECT {} FROM recent_calls AS c LEFT JOIN LATERAL ("
+            " SELECT risk_score, risk_level, is_fraud, fraud_scenario, reasons, "
+            " recommendation, auto_blocked FROM public.call_risk_assessments AS a "
+            " WHERE a.call_id = c.id ORDER BY a.assessed_at DESC, a.id DESC LIMIT 1"
+            ") AS a ON true"
+        ).format(
+            SQL(", ").join(
+                self._identifier(assessment_fields.get(field, field))
+                for field in fields
+            )
+        )
+        params: tuple[object, ...] = ()
+        if filters:
+            mapped_filters = tuple(
+                self._map_assessment_filter(filter_) for filter_ in filters
+            )
+            where, params = self._where(mapped_filters)
+            query += SQL(" WHERE ") + where
+        if order_by:
+            query += SQL(" ORDER BY ") + SQL(", ").join(
+                SQL("{} {}").format(
+                    self._identifier(sort.field), self._sort_direction(sort.direction)
+                )
+                for sort in order_by
+            )
+        if limit is not None:
+            query += SQL(" LIMIT %s")
+            params += (limit,)
+        if offset is not None:
+            query += SQL(" OFFSET %s")
+            params += (offset,)
+        with self.connect() as conn, conn.cursor() as cursor:
+            cursor.execute(query, params)
+            return cursor.fetchall()
+
+    @classmethod
+    def _map_assessment_filter(
+        cls, filter_: Filter | FilterGroup
+    ) -> Filter | FilterGroup:
+        assessment_fields = {
+            "c.risk_score": "a.risk_score",
+            "c.risk_level": "a.risk_level",
+            "c.is_fraud": "a.is_fraud",
+            "c.fraud_scenario": "a.fraud_scenario",
+            "c.reasons": "a.reasons",
+            "c.recommendation": "a.recommendation",
+            "c.auto_blocked": "a.auto_blocked",
+        }
+        if isinstance(filter_, FilterGroup):
+            return FilterGroup(
+                tuple(cls._map_assessment_filter(child) for child in filter_.filters),
+                operator=filter_.operator,
+            )
+        return Filter(
+            assessment_fields.get(filter_.field, filter_.field),
+            filter_.operator,
+            filter_.value,
+        )
+
     def count(
         self,
         table: str,
