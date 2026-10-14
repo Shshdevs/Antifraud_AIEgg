@@ -7,8 +7,6 @@ services:
       - ./Backend/.env
     environment:
       DB_HOST: ${ANTIFRAUDE_DB_HOST:-host.docker.internal}
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     restart: unless-stopped
@@ -20,5 +18,5 @@ services:
     depends_on:
       - backend
     ports:
-      - "${FRONTEND_PORT:-8080}:80"
+      - "${FRONTEND_PORT:-80}:80"
     restart: unless-stopped
