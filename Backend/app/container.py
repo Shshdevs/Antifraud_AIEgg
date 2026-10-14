@@ -54,6 +54,7 @@ class Container:
     database: Database
     check_service_health: CheckServiceHealth
     get_dashboard_summary: GetDashboardSummary
+    dashboard_repository: DashboardRepositoryAdapter
     list_calls: ListCalls
     get_call: GetCall
     predict_fraud: PredictFraud
@@ -95,11 +96,14 @@ class Container:
                 model=model_readiness,
             ),
             get_dashboard_summary=GetDashboardSummary(dashboard_repository),
+            dashboard_repository=dashboard_repository,
             list_calls=ListCalls(calls),
             get_call=GetCall(calls),
             predict_fraud=predict_fraud,
             run_analysis=RunAnalysis(analysis_repository),
-            process_analysis=ProcessAnalysis(analysis_repository, calls, predict_fraud),
+            process_analysis=ProcessAnalysis(
+                analysis_repository, calls, predict_fraud, dashboard_repository
+            ),
             get_analysis_status=GetAnalysisStatus(analysis_repository),
             get_current_analysis=GetCurrentAnalysis(analysis_repository),
             fail_unfinished_analysis_jobs=FailUnfinishedAnalysisJobs(

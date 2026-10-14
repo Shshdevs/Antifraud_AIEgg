@@ -9,6 +9,7 @@ const state = {
   alertsPage: 1,
   callsPages: 0,
   alertsPages: 0,
+  dashboardRefreshStatus: null,
 };
 const titles = {
   dashboard: [
@@ -261,6 +262,23 @@ async function dashboard() {
       )
       .join("")}</div>` +
     `<div class="legend"><span><i style="background:#f28fa0"></i>Все звонки</span><span><i style="background:#d95c73"></i>Подозрительные</span></div>`;
+}
+async function refreshDashboardStatus() {
+  const response = data(await api("/dashboard/refresh-status", {}, false));
+  const status = response?.status || "idle";
+  const previous = state.dashboardRefreshStatus;
+  state.dashboardRefreshStatus = status;
+  const banner = $("#dashboard-refresh-banner");
+  banner.hidden = status === "idle";
+  banner.textContent =
+    status === "refreshing"
+      ? "Анализ завершён. Обновляем статистику дашборда…"
+      : status === "failed"
+        ? "Анализ завершён, но обновить статистику дашборда не удалось. Данные могут быть устаревшими."
+        : "";
+  if (previous === "refreshing" && status === "idle" && state.page === "dashboard") {
+    await dashboard();
+  }
 }
 function query(form) {
   const p = new URLSearchParams(new FormData(form));
@@ -646,14 +664,16 @@ async function init() {
   $("#page-desc").textContent = titles[state.page][1];
   try {
     await health();
+    await refreshDashboardStatus();
     await loadPage();
   } catch (e) {
     notice(e.message);
   }
   setInterval(() => {
     health().catch(() => {});
+    refreshDashboardStatus().catch(() => {});
     if (state.page === "analysis") loadCurrentAnalyses().catch(() => {});
-  }, 5000);
+  }, 3000);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) health().catch(() => {});
   });

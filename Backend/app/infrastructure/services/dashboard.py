@@ -1,3 +1,5 @@
+from threading import Lock
+
 from app.domain.entities.dashboard import (
     DashboardSummary,
     RiskDistribution,
@@ -26,6 +28,22 @@ _DASHBOARD_FIELDS = (
 class DashboardService:
     def __init__(self, database: Database) -> None:
         self._database = database
+        self._refresh_lock = Lock()
+        self._refresh_status = "idle"
+
+    @property
+    def refresh_status(self) -> str:
+        return self._refresh_status
+
+    def refresh_summary_cache(self) -> None:
+        with self._refresh_lock:
+            self._refresh_status = "refreshing"
+            try:
+                self._database.refresh_dashboard_summary_cache()
+            except Exception:
+                self._refresh_status = "failed"
+                raise
+            self._refresh_status = "idle"
 
     def get_summary(self) -> DashboardSummary:
         rows = self._database.select_all(

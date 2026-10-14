@@ -31,6 +31,14 @@ class Database:
             cursor.execute("SELECT 1")
             return cursor.fetchone() == (1,)
 
+    def refresh_dashboard_summary_cache(self) -> None:
+        with self.connect() as conn, conn.cursor() as cursor:
+            cursor.execute(
+                "REFRESH MATERIALIZED VIEW CONCURRENTLY "
+                "public.dashboard_summary_cache"
+            )
+            conn.commit()
+
     def select_one(
         self,
         table: str,

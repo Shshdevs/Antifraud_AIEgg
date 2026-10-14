@@ -9,3 +9,10 @@ class DashboardRepositoryAdapter(DashboardRepository):
 
     def get_summary(self) -> DashboardSummary:
         return self._service.get_summary()
+
+    def refresh_summary_cache(self) -> None:
+        self._service.refresh_summary_cache()
+
+    @property
+    def refresh_status(self) -> str:
+        return self._service.refresh_status
