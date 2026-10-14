@@ -89,11 +89,27 @@ class Database:
             "c.recommendation": "a.recommendation",
             "c.auto_blocked": "a.auto_blocked",
         }
+        call_filters = tuple(
+            filter_
+            for filter_ in filters
+            if not (isinstance(filter_, Filter) and filter_.field == "c.risk_level")
+        )
+        assessment_filters = tuple(
+            filter_
+            for filter_ in filters
+            if isinstance(filter_, Filter) and filter_.field == "c.risk_level"
+        )
         query = SQL(
             "WITH recent_calls AS ("
-            " SELECT id, call_type, imsi_a, msisdn_a, msisdn_b, call_time, "
-            " duration_seconds, msisdn_c FROM public.calls "
-            " ORDER BY call_time DESC LIMIT 100"
+            " SELECT c.id, c.call_type, c.imsi_a, c.msisdn_a, c.msisdn_b, c.call_time, "
+            " c.duration_seconds, c.msisdn_c FROM public.calls AS c"
+        )
+        params: tuple[object, ...] = ()
+        if call_filters:
+            where, params = self._where(call_filters)
+            query += SQL(" WHERE ") + where
+        query += SQL(
+            " ORDER BY c.call_time DESC, c.id DESC LIMIT %s OFFSET %s"
             ") SELECT {} FROM recent_calls AS c LEFT JOIN LATERAL ("
             " SELECT risk_score, risk_level, is_fraud, fraud_scenario, reasons, "
             " recommendation, auto_blocked FROM public.call_risk_assessments AS a "
@@ -105,13 +121,14 @@ class Database:
                 for field in fields
             )
         )
-        params: tuple[object, ...] = ()
-        if filters:
+        params += (limit or 100, offset or 0)
+        if assessment_filters:
             mapped_filters = tuple(
-                self._map_assessment_filter(filter_) for filter_ in filters
+                self._map_assessment_filter(filter_) for filter_ in assessment_filters
             )
-            where, params = self._where(mapped_filters)
+            where, filter_params = self._where(mapped_filters)
             query += SQL(" WHERE ") + where
+            params += filter_params
         if order_by:
             query += SQL(" ORDER BY ") + SQL(", ").join(
                 SQL("{} {}").format(
@@ -119,12 +136,6 @@ class Database:
                 )
                 for sort in order_by
             )
-        if limit is not None:
-            query += SQL(" LIMIT %s")
-            params += (limit,)
-        if offset is not None:
-            query += SQL(" OFFSET %s")
-            params += (offset,)
         with self.connect() as conn, conn.cursor() as cursor:
             cursor.execute(query, params)
             return cursor.fetchall()

@@ -75,13 +75,26 @@ class CallService:
             )
 
         offset = (criteria.page - 1) * criteria.page_size
+        count_filters = [
+            filter_
+            for filter_ in filters
+            if not (
+                isinstance(filter_, Filter)
+                and filter_.field == "c.risk_level"
+            )
+        ]
+        total = self._database.count(
+            "public.calls",
+            alias="c",
+            filters=count_filters,
+        )
         rows = self._database.select_recent_calls_with_latest_assessment(
             _CALL_FIELDS,
             filters=filters,
             order_by=(Sort("c.call_time", "DESC"), Sort("c.id", "DESC")),
+            limit=criteria.page_size,
+            offset=offset,
         )
-        total = len(rows)
-        rows = rows[offset : offset + criteria.page_size]
 
         items = tuple(
             Call(
