@@ -1,7 +1,7 @@
 "use strict";
 const $ = (s) => document.querySelector(s),
   $$ = (s) => [...document.querySelectorAll(s)];
-const API_DEFAULT = "http://127.0.0.1:8000/api/v1";
+const API_DEFAULT = `${window.location.protocol}//${window.location.hostname}${["5500", "5501"].includes(window.location.port) ? ":8000" : ""}/api/v1`;
 const savedPage = localStorage.getItem("antifraudCurrentPage");
 const state = {
   page: savedPage || "dashboard",
