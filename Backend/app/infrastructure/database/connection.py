@@ -121,9 +121,6 @@ class Database:
         params: tuple[object, ...] = ()
 
         if assessment_filters:
-            # Start with matching assessments so PostgreSQL can use indexes
-            # such as (risk_level, assessed_at), then retain only the latest
-            # assessment for each call before pagination.
             query = SQL(
                 "SELECT {} FROM public.call_risk_assessments AS a "
                 "JOIN public.calls AS c ON c.id = a.call_id "
@@ -140,8 +137,6 @@ class Database:
                 where, params = self._where(mapped_filters)
                 query += SQL(" AND ") + where
         else:
-            # Keep the fast path that pages calls before looking up assessments
-            # when no assessment field needs filtering.
             query = SQL(
                 "WITH recent_calls AS ("
                 " SELECT c.id, c.call_type, c.imsi_a, c.msisdn_a, c.msisdn_b, c.call_time, "
@@ -175,6 +170,24 @@ class Database:
         self, *, filters: Sequence[Filter | FilterGroup]
     ) -> int:
         """Count calls after filtering against their latest risk assessment."""
+        if (
+            len(filters) == 1
+            and isinstance(filters[0], Filter)
+            and filters[0].field == "c.risk_level"
+            and filters[0].operator == "="
+        ):
+            query = SQL(
+                "SELECT latest_count "
+                "FROM public.call_risk_level_counts "
+                "WHERE risk_level = %s"
+            )
+            with self.connect() as conn, conn.cursor() as cursor:
+                cursor.execute(query, (filters[0].value,))
+                row = cursor.fetchone()
+            if row is None:
+                return 0
+            return row[0]
+
         call_filters = tuple(
             filter_
             for filter_ in filters
