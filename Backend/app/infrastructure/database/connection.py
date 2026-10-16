@@ -107,36 +107,48 @@ class Database:
             for filter_ in filters
             if isinstance(filter_, Filter) and filter_.field == "c.risk_level"
         )
-        query = SQL(
-            "WITH recent_calls AS ("
-            " SELECT c.id, c.call_type, c.imsi_a, c.msisdn_a, c.msisdn_b, c.call_time, "
-            " c.duration_seconds, c.msisdn_c FROM public.calls AS c"
+        selected_fields = SQL(", ").join(
+            self._identifier(assessment_fields.get(field, field))
+            for field in fields
         )
-        params: tuple[object, ...] = ()
-        if call_filters:
-            where, params = self._where(call_filters)
-            query += SQL(" WHERE ") + where
-        query += SQL(
-            " ORDER BY c.call_time DESC, c.id DESC LIMIT %s OFFSET %s"
-            ") SELECT {} FROM recent_calls AS c LEFT JOIN LATERAL ("
+        lateral_join = SQL(
+            " LEFT JOIN LATERAL ("
             " SELECT risk_score, risk_level, is_fraud, fraud_scenario, reasons, "
             " recommendation, auto_blocked FROM public.call_risk_assessments AS a "
             " WHERE a.call_id = c.id ORDER BY a.assessed_at DESC, a.id DESC LIMIT 1"
             ") AS a ON true"
-        ).format(
-            SQL(", ").join(
-                self._identifier(assessment_fields.get(field, field))
-                for field in fields
-            )
         )
-        params += (limit or 100, offset or 0)
+        params: tuple[object, ...] = ()
+
         if assessment_filters:
-            mapped_filters = tuple(
+            # Apply assessment filters before pagination. Filtering a page of
+            # recent calls afterwards can hide matching rows on later pages.
+            query = SQL("SELECT {} FROM public.calls AS c").format(selected_fields)
+            query += lateral_join
+            mapped_filters = call_filters + tuple(
                 self._map_assessment_filter(filter_) for filter_ in assessment_filters
             )
-            where, filter_params = self._where(mapped_filters)
-            query += SQL(" WHERE ") + where
-            params += filter_params
+            if mapped_filters:
+                where, params = self._where(mapped_filters)
+                query += SQL(" WHERE ") + where
+        else:
+            # Keep the fast path that pages calls before looking up assessments
+            # when no assessment field needs filtering.
+            query = SQL(
+                "WITH recent_calls AS ("
+                " SELECT c.id, c.call_type, c.imsi_a, c.msisdn_a, c.msisdn_b, c.call_time, "
+                " c.duration_seconds, c.msisdn_c FROM public.calls AS c"
+            )
+            if call_filters:
+                where, params = self._where(call_filters)
+                query += SQL(" WHERE ") + where
+            query += SQL(
+                " ORDER BY c.call_time DESC, c.id DESC LIMIT %s OFFSET %s"
+                ") SELECT {} FROM recent_calls AS c"
+            ).format(selected_fields)
+            query += lateral_join
+            params += (limit or 100, offset or 0)
+
         if order_by:
             query += SQL(" ORDER BY ") + SQL(", ").join(
                 SQL("{} {}").format(
@@ -144,9 +156,52 @@ class Database:
                 )
                 for sort in order_by
             )
+        if assessment_filters:
+            query += SQL(" LIMIT %s OFFSET %s")
+            params += (limit or 100, offset or 0)
         with self.connect() as conn, conn.cursor() as cursor:
             cursor.execute(query, params)
             return cursor.fetchall()
+
+    def count_calls_with_latest_assessment(
+        self, *, filters: Sequence[Filter | FilterGroup]
+    ) -> int:
+        """Count calls after filtering against their latest risk assessment."""
+        call_filters = tuple(
+            filter_
+            for filter_ in filters
+            if not (isinstance(filter_, Filter) and filter_.field == "c.risk_level")
+        )
+        assessment_filters = tuple(
+            self._map_assessment_filter(filter_)
+            for filter_ in filters
+            if isinstance(filter_, Filter) and filter_.field == "c.risk_level"
+        )
+        query = SQL(
+            "SELECT count(*) "
+            "FROM public.call_risk_assessments AS a "
+            "JOIN public.calls AS c ON c.id = a.call_id "
+            "WHERE NOT EXISTS ("
+            " SELECT 1 FROM public.call_risk_assessments AS newer "
+            " WHERE newer.call_id = a.call_id "
+            " AND (newer.assessed_at, newer.id) > (a.assessed_at, a.id)"
+            ")"
+        )
+        params: tuple[object, ...] = ()
+        if assessment_filters:
+            where, params = self._where(assessment_filters)
+            query += SQL(" AND ") + where
+        if call_filters:
+            where, call_params = self._where(call_filters)
+            query += SQL(" AND ") + where
+            params += call_params
+
+        with self.connect() as conn, conn.cursor() as cursor:
+            cursor.execute(query, params)
+            row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError("подсчёт строк не вернул результат")
+        return row[0]
 
     @classmethod
     def _map_assessment_filter(

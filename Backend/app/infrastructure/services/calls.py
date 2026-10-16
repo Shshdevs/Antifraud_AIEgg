@@ -83,11 +83,16 @@ class CallService:
                 and filter_.field == "c.risk_level"
             )
         ]
-        total = self._database.count(
-            "public.calls",
-            alias="c",
-            filters=count_filters,
-        )
+        if criteria.risk_level is not None:
+            total = self._database.count_calls_with_latest_assessment(
+                filters=filters
+            )
+        else:
+            total = self._database.count(
+                "public.calls",
+                alias="c",
+                filters=count_filters,
+            )
         rows = self._database.select_recent_calls_with_latest_assessment(
             _CALL_FIELDS,
             filters=filters,
