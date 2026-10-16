@@ -1,5 +1,5 @@
 .venv/
-.vs_code/
+.vs_code/*
 __pycache__/
 .ruff_cache/
 .DS_Store
