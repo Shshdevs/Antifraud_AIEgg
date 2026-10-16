@@ -121,16 +121,24 @@ class Database:
         params: tuple[object, ...] = ()
 
         if assessment_filters:
-            # Apply assessment filters before pagination. Filtering a page of
-            # recent calls afterwards can hide matching rows on later pages.
-            query = SQL("SELECT {} FROM public.calls AS c").format(selected_fields)
-            query += lateral_join
+            # Start with matching assessments so PostgreSQL can use indexes
+            # such as (risk_level, assessed_at), then retain only the latest
+            # assessment for each call before pagination.
+            query = SQL(
+                "SELECT {} FROM public.call_risk_assessments AS a "
+                "JOIN public.calls AS c ON c.id = a.call_id "
+                "WHERE NOT EXISTS ("
+                " SELECT 1 FROM public.call_risk_assessments AS newer "
+                " WHERE newer.call_id = a.call_id "
+                " AND (newer.assessed_at, newer.id) > (a.assessed_at, a.id)"
+                ")"
+            ).format(selected_fields)
             mapped_filters = call_filters + tuple(
                 self._map_assessment_filter(filter_) for filter_ in assessment_filters
             )
             if mapped_filters:
                 where, params = self._where(mapped_filters)
-                query += SQL(" WHERE ") + where
+                query += SQL(" AND ") + where
         else:
             # Keep the fast path that pages calls before looking up assessments
             # when no assessment field needs filtering.
