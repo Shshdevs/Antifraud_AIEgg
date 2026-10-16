@@ -185,10 +185,10 @@ class Database:
             for filter_ in filters
             if isinstance(filter_, Filter) and filter_.field == "c.risk_level"
         )
-        query = SQL(
-            "SELECT count(*) "
-            "FROM public.call_risk_assessments AS a "
-            "JOIN public.calls AS c ON c.id = a.call_id "
+        query = SQL("SELECT count(*) FROM public.call_risk_assessments AS a ")
+        if call_filters:
+            query += SQL("JOIN public.calls AS c ON c.id = a.call_id ")
+        query += SQL(
             "WHERE NOT EXISTS ("
             " SELECT 1 FROM public.call_risk_assessments AS newer "
             " WHERE newer.call_id = a.call_id "
