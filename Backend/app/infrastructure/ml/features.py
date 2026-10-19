@@ -1,6 +1,8 @@
 from collections.abc import Mapping
 from datetime import timedelta
 
+import networkx as nx
+
 from app.domain.entities.call import Call
 from app.domain.value_objects import CallType
 
@@ -47,22 +49,37 @@ def build_features(call: Call, history: tuple[Call, ...]) -> dict[str, FeatureVa
         ),
     }
 
-    a_contacts = _contacts_of(call.msisdn_a, history)
-    b_contacts = _contacts_of(call.msisdn_b, history)
+    contact_graph = _build_contact_graph(history)
+    directed_graph = _build_directed_graph(history)
+    a_contacts = (
+        set(contact_graph.successors(call.msisdn_a))
+        if call.msisdn_a in contact_graph
+        else set()
+    )
+    a_graph_degree = (
+        contact_graph.out_degree(call.msisdn_a)
+        if call.msisdn_a in contact_graph
+        else 0
+    )
+    b_graph_degree = (
+        contact_graph.out_degree(call.msisdn_b)
+        if call.msisdn_b in contact_graph
+        else 0
+    )
     reciprocal_contacts = {
         contact
         for contact in a_contacts
-        if _has_contact(call.msisdn_a, contact, history)
-        and _has_contact(contact, call.msisdn_a, history)
+        if directed_graph.has_edge(call.msisdn_a, contact)
+        and directed_graph.has_edge(contact, call.msisdn_a)
     }
     features.update(
         {
-            "a_prior_graph_degree": len(a_contacts),
-            "b_prior_graph_degree": len(b_contacts),
-            "a_b_prior_reciprocal_contact": _has_contact(
-                call.msisdn_a, call.msisdn_b, history
+            "a_prior_graph_degree": a_graph_degree,
+            "b_prior_graph_degree": b_graph_degree,
+            "a_b_prior_reciprocal_contact": directed_graph.has_edge(
+                call.msisdn_a, call.msisdn_b
             )
-            and _has_contact(call.msisdn_b, call.msisdn_a, history),
+            and directed_graph.has_edge(call.msisdn_b, call.msisdn_a),
             "a_prior_reciprocal_contact_count": len(reciprocal_contacts),
             "a_prior_reciprocal_contact_rate": _ratio(
                 len(reciprocal_contacts), len(a_contacts)
@@ -146,23 +163,23 @@ def _is_long(call: Call) -> bool:
     return call.duration_seconds >= LONG_CALL_SECONDS
 
 
-def _contacts_of(number: str, history: tuple[Call, ...]) -> set[str]:
-    contacts: set[str] = set()
+def _build_contact_graph(history: tuple[Call, ...]) -> nx.DiGraph:
+    graph = nx.DiGraph()
     for call in history:
-        if call.msisdn_a == number:
-            contacts.add(call.msisdn_b)
-        if call.msisdn_b == number:
-            contacts.add(call.msisdn_a)
-        if call.msisdn_c == number:
-            contacts.add(call.msisdn_b)
-    contacts.discard(number)
-    return contacts
+        if call.msisdn_a != call.msisdn_b:
+            graph.add_edge(call.msisdn_a, call.msisdn_b)
+            graph.add_edge(call.msisdn_b, call.msisdn_a)
+        if call.msisdn_c is not None and call.msisdn_c != call.msisdn_b:
+            graph.add_edge(call.msisdn_c, call.msisdn_b)
+    return graph
 
 
-def _has_contact(source: str, destination: str, history: tuple[Call, ...]) -> bool:
-    return any(
-        item.msisdn_a == source and item.msisdn_b == destination for item in history
-    )
+def _build_directed_graph(history: tuple[Call, ...]) -> nx.DiGraph:
+    graph = nx.DiGraph()
+    for call in history:
+        if call.msisdn_a != call.msisdn_b:
+            graph.add_edge(call.msisdn_a, call.msisdn_b)
+    return graph
 
 
 def _forwarding_motif_repeats(call: Call, history: tuple[Call, ...]) -> int:
